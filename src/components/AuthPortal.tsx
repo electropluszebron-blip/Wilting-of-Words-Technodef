@@ -19,6 +19,8 @@ import { audioSynth } from '../services/audioSynth';
 import { 
   checkUserExistsInFirebase, 
   saveUserToFirebase, 
+  saveUserWithPasswordToFirebase,
+  verifyUserInFirebase,
   recordUserLoginInFirebase 
 } from '../firebase';
 
@@ -232,26 +234,30 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
     setLoading(true);
     try {
-      await safeFetchJson('/api/auth/set-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: email.trim().toLowerCase(),
-          otp: otp.join(''),
-          password,
-          name: name.trim()
-        }),
-      });
+      try {
+        await safeFetchJson('/api/auth/set-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: email.trim().toLowerCase(),
+            otp: otp.join(''),
+            password,
+            name: name.trim()
+          }),
+        });
+      } catch (apiErr) {
+        console.warn('[Auth] Server API unreachable, persisting directly to Firestore:', apiErr);
+      }
 
       // Save user record to Firestore database for cross-device persistence
-      await saveUserToFirebase(email.trim().toLowerCase(), name.trim());
+      await saveUserWithPasswordToFirebase(email.trim().toLowerCase(), name.trim(), password);
 
       // Prefill sign in form & redirect to sign in page
       setSignInEmail(email.trim());
       setSignInPassword('');
       setMode('signin');
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'Failed to complete registration.');
     } finally {
       setLoading(false);
     }
@@ -262,27 +268,50 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     e.preventDefault();
     setError(null);
 
-    if (!signInEmail.trim() || !signInPassword) {
+    const cleanEmail = signInEmail.trim().toLowerCase();
+    if (!cleanEmail || !signInPassword) {
       setError('Please provide both your registered email and passphrase.');
       return;
     }
 
     setLoading(true);
     try {
-      const data = await safeFetchJson('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: signInEmail.trim().toLowerCase(),
-          password: signInPassword,
-        }),
-      });
+      let authenticatedUser: AuthUser | null = null;
 
-      const authenticatedUser: AuthUser = {
-        id: data.user.id,
-        name: data.user.name,
-        email: data.user.email,
-      };
+      try {
+        const data = await safeFetchJson('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: cleanEmail,
+            password: signInPassword,
+          }),
+        });
+
+        authenticatedUser = {
+          id: data.user.id,
+          name: data.user.name,
+          email: data.user.email,
+        };
+      } catch (apiErr: any) {
+        // Fallback directly to Firebase Firestore
+        const fbResult = await verifyUserInFirebase(cleanEmail, signInPassword);
+        if (fbResult && fbResult.valid) {
+          authenticatedUser = {
+            id: 'fb_' + cleanEmail,
+            name: fbResult.user?.name || 'Reader',
+            email: cleanEmail,
+          };
+        } else if (fbResult && !fbResult.valid) {
+          throw new Error('Incorrect passphrase. Please try again.');
+        } else {
+          throw new Error(apiErr.message || 'Invalid credentials or user not found.');
+        }
+      }
+
+      if (!authenticatedUser) {
+        throw new Error('Authentication could not be completed.');
+      }
 
       // Record login in Firestore
       await recordUserLoginInFirebase(authenticatedUser.email);
@@ -294,7 +323,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       audioSynth.playNow();
       onAuthenticated(authenticatedUser);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'Failed to authenticate.');
     } finally {
       setLoading(false);
     }

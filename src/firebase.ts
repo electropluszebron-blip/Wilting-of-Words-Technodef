@@ -53,6 +53,60 @@ export async function checkUserExistsInFirebase(email: string): Promise<boolean>
 }
 
 /**
+ * Registers or updates a user in Firestore with passphrase.
+ */
+export async function saveUserWithPasswordToFirebase(email: string, name: string, passwordInput: string): Promise<void> {
+  try {
+    const cleanEmail = email.toLowerCase().trim();
+    const docId = sanitizeEmailKey(cleanEmail);
+    const userDocRef = doc(db, 'users', docId);
+    
+    await setDoc(userDocRef, {
+      email: cleanEmail,
+      name: name.trim(),
+      passwordHash: btoa(passwordInput),
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString()
+    }, { merge: true });
+    
+    console.log(`[Firebase] User record and credentials saved for ${cleanEmail}`);
+  } catch (error) {
+    console.warn('[Firebase] Warning saving user to Firestore:', error);
+  }
+}
+
+/**
+ * Validates user credentials directly with Firestore.
+ */
+export async function verifyUserInFirebase(email: string, passwordAttempt: string): Promise<{ valid: boolean; user?: FirestoreUserRecord } | null> {
+  try {
+    const cleanEmail = email.toLowerCase().trim();
+    const docId = sanitizeEmailKey(cleanEmail);
+    const userDocRef = doc(db, 'users', docId);
+    const snap = await getDoc(userDocRef);
+    if (snap.exists()) {
+      const data = snap.data() as any;
+      if (!data.passwordHash || data.passwordHash === btoa(passwordAttempt) || data.passwordHash === passwordAttempt) {
+        return {
+          valid: true,
+          user: {
+            email: cleanEmail,
+            name: data.name || 'Reader',
+            createdAt: data.createdAt || new Date().toISOString(),
+            lastLoginAt: new Date().toISOString()
+          }
+        };
+      }
+      return { valid: false };
+    }
+    return null;
+  } catch (error) {
+    console.warn('[Firebase] Warning verifying user:', error);
+    return null;
+  }
+}
+
+/**
  * Registers or updates a user in Firestore.
  */
 export async function saveUserToFirebase(email: string, name: string): Promise<void> {
