@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { loadUsers } from './shared';
+import { loadUsers, parseRequestBody } from './shared';
 
 export default async function handler(req: Request, res: Response) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -20,7 +20,8 @@ export default async function handler(req: Request, res: Response) {
   }
 
   try {
-    const { email, password } = req.body || {};
+    const body = await parseRequestBody(req);
+    const { email, password } = body || {};
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required.' });

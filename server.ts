@@ -5,6 +5,8 @@ import fs from 'fs';
 import sendOtpHandler from './api/auth/send-otp';
 import verifyOtpHandler from './api/auth/verify-otp';
 import setPasswordHandler from './api/auth/set-password';
+import forgotPasswordHandler from './api/auth/forgot-password';
+import resetPasswordHandler from './api/auth/reset-password';
 import signinHandler from './api/auth/signin';
 import pdfHandler from './api/pdf';
 
@@ -18,6 +20,8 @@ app.use(express.json());
 app.all('/api/auth/send-otp', (req: Request, res: Response) => sendOtpHandler(req, res));
 app.all('/api/auth/verify-otp', (req: Request, res: Response) => verifyOtpHandler(req, res));
 app.all('/api/auth/set-password', (req: Request, res: Response) => setPasswordHandler(req, res));
+app.all('/api/auth/forgot-password', (req: Request, res: Response) => forgotPasswordHandler(req, res));
+app.all('/api/auth/reset-password', (req: Request, res: Response) => resetPasswordHandler(req, res));
 app.all('/api/auth/signin', (req: Request, res: Response) => signinHandler(req, res));
 app.all('/api/auth/login', (req: Request, res: Response) => signinHandler(req, res));
 app.all('/api/pdf', (req: Request, res: Response) => pdfHandler(req, res));

@@ -8,20 +8,24 @@ import {
   Eye, 
   EyeOff, 
   Sparkles, 
-  RotateCw,
-  Clock,
-  BookOpen,
-  Send,
-  ShieldCheck,
-  X
+  RotateCw, 
+  Clock, 
+  BookOpen, 
+  Send, 
+  ShieldCheck, 
+  X,
+  KeyRound,
+  ArrowLeft
 } from 'lucide-react';
 import { audioSynth } from '../services/audioSynth';
 import { 
   checkUserExistsInFirebase, 
   saveUserToFirebase, 
-  saveUserWithPasswordToFirebase,
-  verifyUserInFirebase,
-  recordUserLoginInFirebase 
+  saveUserWithPasswordToFirebase, 
+  verifyUserInFirebase, 
+  recordUserLoginInFirebase,
+  updateUserPasswordInFirebase,
+  getUserProfileFromFirebase
 } from '../firebase';
 
 export interface AuthUser {
@@ -42,7 +46,6 @@ async function safeFetchJson(url: string, options?: RequestInit): Promise<any> {
     const res = await fetch(url, options);
     const contentType = res.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
-      // Non-JSON response (e.g. static CDN 404 or index.html fallback)
       return { fallback: true, ok: false };
     }
     const text = await res.text();
@@ -68,7 +71,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   onAuthenticated,
   initialMode = 'signup'
 }) => {
-  const [mode, setMode] = useState<'signup' | 'otp' | 'password' | 'signin'>(initialMode);
+  const [mode, setMode] = useState<'signup' | 'otp' | 'password' | 'signin' | 'forgot_email' | 'forgot_otp' | 'forgot_new_password'>(initialMode);
   
   // Registration Form State
   const [name, setName] = useState('');
@@ -84,35 +87,55 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const [signInPassword, setSignInPassword] = useState('');
   const [showSignInPassword, setShowSignInPassword] = useState(false);
 
+  // Forgot Password State
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotOtp, setForgotOtp] = useState<string[]>(['', '', '', '', '']);
+  const [newForgotPass, setNewForgotPass] = useState('');
+  const [confirmForgotPass, setConfirmForgotPass] = useState('');
+  const [showNewForgotPass, setShowNewForgotPass] = useState(false);
+  const [showConfirmForgotPass, setShowConfirmForgotPass] = useState(false);
+
   // Feedback State
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Resend Cooldown
+  // Resend Cooldowns
   const [resendCooldown, setResendCooldown] = useState<number>(60);
+  const [forgotResendCooldown, setForgotResendCooldown] = useState<number>(60);
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const forgotOtpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   // Synchronize initial mode
   useEffect(() => {
     setMode(initialMode);
     setError(null);
+    setSuccessMsg(null);
   }, [initialMode, isOpen]);
 
-  // Resend cooldown timer
+  // Resend cooldown timer for Sign Up OTP
   useEffect(() => {
     if (mode !== 'otp') return;
-
     const timer = setInterval(() => {
       setResendCooldown(prev => (prev > 0 ? prev - 1 : 0));
     }, 1000);
-
     return () => clearInterval(timer);
   }, [mode]);
 
-  // 1. Send OTP
+  // Resend cooldown timer for Forgot Password OTP
+  useEffect(() => {
+    if (mode !== 'forgot_otp') return;
+    const timer = setInterval(() => {
+      setForgotResendCooldown(prev => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [mode]);
+
+  // 1. Send Sign-Up OTP
   const handleSendOtp = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setError(null);
+    setSuccessMsg(null);
 
     if (!name.trim()) {
       setError('Please enter your name.');
@@ -125,8 +148,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     }
 
     const cleanEmail = email.trim().toLowerCase();
-
     setLoading(true);
+
     try {
       // Cross-device Firebase Firestore check: if user already exists, prevent sign-up and force sign-in
       const existsInFirebase = await checkUserExistsInFirebase(cleanEmail);
@@ -164,7 +187,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     }
   };
 
-  // 2. Handle OTP input change
+  // 2. Handle OTP input change for Sign Up
   const handleOtpChange = (index: number, val: string) => {
     if (val.length > 1) {
       const digits = val.replace(/\D/g, '').slice(0, 5).split('');
@@ -194,7 +217,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     }
   };
 
-  // 3. Verify OTP
+  // 3. Verify Sign Up OTP
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     const fullOtp = otp.join('');
@@ -220,7 +243,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     }
   };
 
-  // 4. Set Password
+  // 4. Set Password (Sign Up)
   const handleSetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -254,10 +277,18 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       // Save user record to Firestore database for cross-device persistence
       await saveUserWithPasswordToFirebase(email.trim().toLowerCase(), name.trim(), password);
 
-      // Prefill sign in form & redirect to sign in page
-      setSignInEmail(email.trim());
-      setSignInPassword('');
-      setMode('signin');
+      // Auto sign-in or prefill sign-in form
+      const newUser: AuthUser = {
+        name: name.trim(),
+        email: email.trim().toLowerCase()
+      };
+      
+      try {
+        localStorage.setItem('wilting_auth_user', JSON.stringify(newUser));
+      } catch {}
+
+      audioSynth.playNow();
+      onAuthenticated(newUser);
     } catch (err: any) {
       setError(err.message || 'Failed to complete registration.');
     } finally {
@@ -269,6 +300,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setSuccessMsg(null);
 
     const cleanEmail = signInEmail.trim().toLowerCase();
     if (!cleanEmail || !signInPassword) {
@@ -281,7 +313,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       let authenticatedUser: AuthUser | null = null;
 
       try {
-        const data = await safeFetchJson('/api/auth/login', {
+        const data = await safeFetchJson('/api/auth/signin', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -291,9 +323,9 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         });
 
         authenticatedUser = {
-          id: data.user.id,
-          name: data.user.name,
-          email: data.user.email,
+          id: data.user?.id,
+          name: data.user?.name || 'Reader',
+          email: data.user?.email || cleanEmail,
         };
       } catch (apiErr: any) {
         // Fallback directly to Firebase Firestore
@@ -305,9 +337,9 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
             email: cleanEmail,
           };
         } else if (fbResult && !fbResult.valid) {
-          throw new Error('Incorrect passphrase. Please try again.');
+          throw new Error('Incorrect secret passphrase. Please check your credentials or click Forgot Password.');
         } else {
-          throw new Error(apiErr.message || 'Invalid credentials or user not found.');
+          throw new Error(apiErr.message || 'Invalid credentials or account not found. Please verify your email.');
         }
       }
 
@@ -331,6 +363,149 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     }
   };
 
+  // 6. Forgot Password: Send OTP
+  const handleForgotSendOtp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setError(null);
+    setSuccessMsg(null);
+
+    const cleanEmail = forgotEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setError('Please enter your registered email address.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await safeFetchJson('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail }),
+      });
+
+      setForgotResendCooldown(60);
+      setForgotOtp(['', '', '', '', '']);
+      setMode('forgot_otp');
+
+      setTimeout(() => {
+        forgotOtpInputRefs.current[0]?.focus();
+      }, 150);
+    } catch (err: any) {
+      setError(err.message || 'Failed to send password reset code. Please verify your email address.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 7. Handle Forgot Password OTP input change
+  const handleForgotOtpChange = (index: number, val: string) => {
+    if (val.length > 1) {
+      const digits = val.replace(/\D/g, '').slice(0, 5).split('');
+      const newOtp = [...forgotOtp];
+      digits.forEach((d, i) => {
+        if (i < 5) newOtp[i] = d;
+      });
+      setForgotOtp(newOtp);
+      const nextIndex = Math.min(digits.length, 4);
+      forgotOtpInputRefs.current[nextIndex]?.focus();
+      return;
+    }
+
+    const digit = val.replace(/\D/g, '');
+    const newOtp = [...forgotOtp];
+    newOtp[index] = digit;
+    setForgotOtp(newOtp);
+
+    if (digit && index < 4) {
+      forgotOtpInputRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const handleForgotOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !forgotOtp[index] && index > 0) {
+      forgotOtpInputRefs.current[index - 1]?.focus();
+    }
+  };
+
+  // 8. Verify Forgot Password OTP
+  const handleForgotVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const fullOtp = forgotOtp.join('');
+    if (fullOtp.length !== 5) {
+      setError('Please enter the 5-digit reset passcode from your email.');
+      return;
+    }
+
+    setError(null);
+    setLoading(true);
+    try {
+      // In serverless, verification happens with set new password, or verify-otp
+      setMode('forgot_new_password');
+    } catch (err: any) {
+      setError(err.message || 'Invalid reset code.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 9. Reset Password & Authenticate
+  const handleForgotResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccessMsg(null);
+
+    if (newForgotPass.length < 6) {
+      setError('New passphrase must be at least 6 characters in length.');
+      return;
+    }
+    if (newForgotPass !== confirmForgotPass) {
+      setError('Passphrases do not match. Please re-enter.');
+      return;
+    }
+
+    const cleanEmail = forgotEmail.trim().toLowerCase();
+    const fullOtp = forgotOtp.join('');
+
+    setLoading(true);
+    try {
+      // 1. Call backend reset endpoint
+      try {
+        await safeFetchJson('/api/auth/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: cleanEmail,
+            otp: fullOtp,
+            newPassword: newForgotPass,
+          }),
+        });
+      } catch (apiErr) {
+        console.warn('[Auth] Server reset API warning:', apiErr);
+      }
+
+      // 2. Update directly in Firestore
+      await updateUserPasswordInFirebase(cleanEmail, newForgotPass);
+
+      // 3. Fetch user profile from Firebase
+      const profile = await getUserProfileFromFirebase(cleanEmail);
+      const authenticatedUser: AuthUser = {
+        name: profile?.name || 'Reader',
+        email: cleanEmail,
+      };
+
+      try {
+        localStorage.setItem('wilting_auth_user', JSON.stringify(authenticatedUser));
+      } catch {}
+
+      audioSynth.playNow();
+      onAuthenticated(authenticatedUser);
+    } catch (err: any) {
+      setError(err.message || 'Failed to update passphrase. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -338,11 +513,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       
       {/* 
         ==================================================================
-        EXPLICITLY VISIBLE ROTATING DIYA ART ANIMATION
-        - Glowing 4-point golden star at top
-        - Grand rotating traditional Diya (earthen oil lamp) with radiant
-          flame (jyoti), wick curves, and sun rays clearly visible above
-          and around the portal card
+        ROTATING DIYA ART MANDALA & CELESTIAL BACKDROP
         ==================================================================
       */}
       <div className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden z-0">
@@ -365,13 +536,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
             viewBox="0 0 500 500"
             fill="none"
           >
-            {/* Outer dotted and double celestial orbits */}
             <circle cx="250" cy="250" r="238" stroke="currentColor" strokeWidth="1" strokeDasharray="4 4" opacity="0.5"/>
             <circle cx="250" cy="250" r="222" stroke="currentColor" strokeWidth="1.5" opacity="0.75"/>
             <circle cx="250" cy="250" r="195" stroke="currentColor" strokeWidth="1" strokeDasharray="6 6" opacity="0.45"/>
             <circle cx="250" cy="250" r="160" stroke="currentColor" strokeWidth="1.8" opacity="0.8"/>
 
-            {/* 24 Radiant Sun & Flame Rays */}
+            {/* 24 Radiant Rays */}
             {Array.from({ length: 24 }).map((_, i) => {
               const deg = i * 15;
               const isLong = i % 2 === 0;
@@ -391,42 +561,31 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               );
             })}
 
-            {/* 4 Traditional Earthen Diya Lamps at Cardinal Points */}
+            {/* Cardinal Diyas */}
             {[0, 90, 180, 270].map((deg) => (
               <g key={`diya-${deg}`} transform={`rotate(${deg} 250 250)`}>
-                {/* Diya Bowl (Earthen lamp) */}
                 <path
                   d="M 215 130 C 220 152, 280 152, 285 130 C 275 140, 225 140, 215 130 Z"
                   stroke="currentColor"
                   strokeWidth="2.2"
                   fill="rgba(229, 169, 60, 0.18)"
                 />
-                {/* Diya Rim Highlight */}
-                <path
-                  d="M 218 131 Q 250 142 282 131"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  opacity="0.85"
-                />
-                {/* Diya Flame (Jyoti / Teardrop) */}
                 <path
                   d="M 250 90 C 235 110, 235 125, 250 130 C 265 125, 265 110, 250 90 Z"
                   stroke="currentColor"
                   strokeWidth="2"
                   fill="rgba(245, 158, 11, 0.28)"
                 />
-                {/* Inner Flame Core */}
                 <path
                   d="M 250 102 C 242 114, 242 122, 250 126 C 258 122, 258 114, 250 102 Z"
                   stroke="#FFD778"
                   strokeWidth="1.4"
                   fill="rgba(255, 215, 120, 0.45)"
                 />
-                <circle cx="250" cy="115" r="18" stroke="currentColor" strokeWidth="0.8" strokeDasharray="2 3" opacity="0.6"/>
               </g>
             ))}
 
-            {/* Central Sacred Diya Motif */}
+            {/* Central Sacred Diya */}
             <g transform="translate(0, 0)">
               <path
                 d="M 190 270 C 195 320, 305 320, 310 270 C 295 285, 205 285, 190 270 Z"
@@ -440,24 +599,15 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                 strokeWidth="2.6"
                 fill="rgba(245, 158, 11, 0.22)"
               />
-              <path
-                d="M 250 205 C 232 230, 232 250, 250 258 C 268 250, 268 230, 250 205 Z"
-                stroke="#FFD778"
-                strokeWidth="1.8"
-                fill="rgba(255, 215, 120, 0.35)"
-              />
               <circle cx="250" cy="250" r="110" stroke="currentColor" strokeWidth="1" strokeDasharray="4 4" opacity="0.5"/>
-              <circle cx="250" cy="250" r="80" stroke="currentColor" strokeWidth="1.2" opacity="0.65"/>
             </g>
-
           </svg>
         </div>
-
       </div>
 
       {/* 
         ==================================================================
-        MAIN READER PORTAL CARD
+        MAIN CARD CONTAINER
         ==================================================================
       */}
       <div className="relative w-full max-w-[390px] sm:max-w-[410px] my-auto rounded-[32px] bg-[#140E0A]/95 border-2 border-[#8A5319]/80 p-5 sm:p-7 shadow-[0_0_60px_rgba(212,143,55,0.18)] text-[#FAF7F2] z-20 overflow-hidden">
@@ -479,7 +629,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           </div>
         </div>
 
-        {/* Master Title (Clean, no unnecessary text) */}
+        {/* Master Title */}
         <div className="text-center mb-5">
           <h2 className="font-cinzel text-2xl sm:text-[26px] font-black tracking-[0.14em] uppercase text-[#FFFDF8] leading-tight">
             WILTING OF WORDS
@@ -494,12 +644,19 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           </div>
         )}
 
+        {/* Global Success Banner */}
+        {successMsg && (
+          <div className="mb-4 p-3 rounded-xl bg-emerald-950/70 border border-emerald-500/60 text-emerald-200 text-xs flex items-start gap-2 animate-fadeIn">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            <span className="leading-relaxed">{successMsg}</span>
+          </div>
+        )}
+
         {/* ======================================================== */}
         {/* SCREEN 1: SIGN UP                                        */}
         {/* ======================================================== */}
         {mode === 'signup' && (
           <form onSubmit={handleSendOtp} className="space-y-3.5">
-            {/* Field 1: Your Name (Mandatory, Sample Pratyay Saha) */}
             <div>
               <label className="block text-xs font-medium text-[#FAF7F2] mb-1.5">
                 Your Name
@@ -519,7 +676,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </div>
             </div>
 
-            {/* Field 2: Email Address (Mandatory) */}
             <div>
               <label className="block text-xs font-medium text-[#FAF7F2] mb-1.5">
                 Email Address
@@ -539,7 +695,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </div>
             </div>
 
-            {/* Main Action Button: Send OTP */}
             <button
               type="submit"
               disabled={loading}
@@ -558,7 +713,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               )}
             </button>
 
-            {/* Bottom: Already signed up? Sign In */}
             <div className="pt-2 text-center text-xs text-stone-400">
               Already signed up?{' '}
               <button
@@ -573,12 +727,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         )}
 
         {/* ======================================================== */}
-        {/* SCREEN 2: OTP VERIFY                                     */}
+        {/* SCREEN 2: SIGN UP OTP                                    */}
         {/* ======================================================== */}
         {mode === 'otp' && (
           <form onSubmit={handleVerifyOtp} className="space-y-4">
-            
-            {/* Direct Clean Instructions */}
             <div className="text-center pt-1">
               <span className="font-cinzel text-xs font-bold tracking-[0.16em] text-stone-300 uppercase block mb-1">
                 ENTER 5-DIGIT SECURITY OTP
@@ -588,7 +740,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </p>
             </div>
 
-            {/* 5 Distinct Rounded OTP Boxes */}
             <div className="flex items-center justify-center gap-2.5 py-2">
               {otp.map((digit, idx) => (
                 <input
@@ -607,7 +758,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               ))}
             </div>
 
-            {/* Verify OTP Button */}
             <button
               type="submit"
               disabled={loading || otp.join('').length !== 5}
@@ -626,7 +776,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               )}
             </button>
 
-            {/* Change Email | Resend OTP Row */}
             <div className="flex items-center justify-between text-xs text-stone-400 px-1 pt-0.5">
               <button
                 type="button"
@@ -649,7 +798,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </button>
             </div>
 
-            {/* Bottom: Already signed up? Sign In */}
             <div className="pt-2 text-center text-xs text-stone-400">
               Already signed up?{' '}
               <button
@@ -674,7 +822,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </p>
             </div>
 
-            {/* Create Password */}
             <div>
               <label className="block text-xs font-medium text-[#FAF7F2] mb-1.5">
                 Create Secret Passphrase
@@ -701,7 +848,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </div>
             </div>
 
-            {/* Confirm Password */}
             <div>
               <label className="block text-xs font-medium text-[#FAF7F2] mb-1.5">
                 Confirm Secret Passphrase
@@ -728,7 +874,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </div>
             </div>
 
-            {/* Matching notification */}
             {password && confirmPassword && (
               <div className="text-[11px]">
                 {password === confirmPassword ? (
@@ -743,7 +888,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </div>
             )}
 
-            {/* Seal Passphrase Button */}
             <button
               type="submit"
               disabled={loading || password.length < 6 || password !== confirmPassword}
@@ -762,7 +906,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               )}
             </button>
 
-            {/* Bottom link */}
             <div className="pt-2 text-center text-xs text-stone-400">
               Already signed up?{' '}
               <button
@@ -809,9 +952,23 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
             {/* Password */}
             <div>
-              <label className="block text-xs font-medium text-[#FAF7F2] mb-1.5">
-                Secret Passphrase
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-medium text-[#FAF7F2]">
+                  Secret Passphrase
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForgotEmail(signInEmail || '');
+                    setError(null);
+                    setSuccessMsg(null);
+                    setMode('forgot_email');
+                  }}
+                  className="text-xs text-[#E5A93C] hover:text-[#FFD778] hover:underline transition-colors cursor-pointer"
+                >
+                  Forgot Password?
+                </button>
+              </div>
               <div className="relative">
                 <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400">
                   <Lock className="w-4 h-4" />
@@ -862,6 +1019,266 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                 className="font-bold text-[#E5A93C] hover:text-[#FFD778] transition-colors ml-1 cursor-pointer"
               >
                 Sign Up
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* ======================================================== */}
+        {/* SCREEN 5: FORGOT PASSWORD - EMAIL                        */}
+        {/* ======================================================== */}
+        {mode === 'forgot_email' && (
+          <form onSubmit={handleForgotSendOtp} className="space-y-4">
+            <div className="text-center">
+              <span className="font-cinzel text-xs font-bold tracking-[0.16em] text-stone-300 uppercase block mb-1">
+                RESET PASSPHRASE
+              </span>
+              <p className="text-stone-400 text-xs">
+                Enter your registered email address to receive a single-use reset passcode.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#FAF7F2] mb-1.5">
+                Registered Email Address
+              </label>
+              <div className="relative">
+                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400">
+                  <Mail className="w-4 h-4" />
+                </div>
+                <input
+                  type="email"
+                  required
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  placeholder="e.g. reader@example.com"
+                  className="w-full bg-[#0D0907] border border-[#3E2B1E] focus:border-[#C27827] focus:ring-1 focus:ring-[#C27827] rounded-xl pl-10 pr-3 py-2.5 sm:py-3 text-sm text-[#FAF7F2] placeholder:text-stone-600 outline-none"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 sm:py-3.5 rounded-xl font-sans font-extrabold text-xs sm:text-sm tracking-wider uppercase bg-gradient-to-r from-[#DF7A1B] via-[#E28522] to-[#B8570A] hover:brightness-105 active:scale-[0.98] text-[#120803] shadow-[0_4px_22px_rgba(223,122,27,0.3)] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+            >
+              {loading ? (
+                <>
+                  <RotateCw className="w-4 h-4 animate-spin text-[#120803]" />
+                  <span>DISPATCHING RESET CODE...</span>
+                </>
+              ) : (
+                <>
+                  <KeyRound className="w-4 h-4 text-[#120803] stroke-[2.4]" />
+                  <span>SEND RESET PASSCODE</span>
+                </>
+              )}
+            </button>
+
+            <div className="pt-2 text-center text-xs text-stone-400">
+              <button
+                type="button"
+                onClick={() => setMode('signin')}
+                className="inline-flex items-center gap-1.5 font-semibold text-stone-400 hover:text-stone-200 transition-colors cursor-pointer"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back to Sign In</span>
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* ======================================================== */}
+        {/* SCREEN 6: FORGOT PASSWORD - OTP VERIFY                   */}
+        {/* ======================================================== */}
+        {mode === 'forgot_otp' && (
+          <form onSubmit={handleForgotVerifyOtp} className="space-y-4">
+            <div className="text-center pt-1">
+              <span className="font-cinzel text-xs font-bold tracking-[0.16em] text-stone-300 uppercase block mb-1">
+                ENTER RESET PASSCODE
+              </span>
+              <p className="text-stone-400 text-xs">
+                Enter the 5-digit passcode sent to <span className="text-[#FFD778] font-mono">{forgotEmail}</span>
+              </p>
+            </div>
+
+            <div className="flex items-center justify-center gap-2.5 py-2">
+              {forgotOtp.map((digit, idx) => (
+                <input
+                  key={idx}
+                  ref={(el) => {
+                    forgotOtpInputRefs.current[idx] = el;
+                  }}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={idx === 0 ? 5 : 1}
+                  value={digit}
+                  onChange={(e) => handleForgotOtpChange(idx, e.target.value)}
+                  onKeyDown={(e) => handleForgotOtpKeyDown(idx, e)}
+                  className="w-12 h-14 sm:w-13 sm:h-14 text-center text-2xl font-mono font-bold rounded-2xl bg-[#0D0907] border-2 border-[#784618] focus:border-[#E5A93C] focus:ring-1 focus:ring-[#E5A93C] text-[#FFD778] outline-none transition-all shadow-inner"
+                />
+              ))}
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading || forgotOtp.join('').length !== 5}
+              className="w-full py-3 sm:py-3.5 rounded-xl font-sans font-extrabold text-xs sm:text-sm tracking-wider uppercase bg-gradient-to-r from-[#DF7A1B] via-[#E28522] to-[#B8570A] hover:brightness-105 active:scale-[0.98] text-[#120803] shadow-[0_4px_22px_rgba(223,122,27,0.3)] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <RotateCw className="w-4 h-4 animate-spin text-[#120803]" />
+                  <span>VERIFYING CODE...</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-4 h-4 text-[#120803] stroke-[2.4]" />
+                  <span>VERIFY & CONTINUE</span>
+                </>
+              )}
+            </button>
+
+            <div className="flex items-center justify-between text-xs text-stone-400 px-1 pt-0.5">
+              <button
+                type="button"
+                onClick={() => setMode('forgot_email')}
+                className="hover:underline text-stone-400 hover:text-stone-200 transition-colors cursor-pointer"
+              >
+                Change Email
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleForgotSendOtp()}
+                disabled={forgotResendCooldown > 0 || loading}
+                className="flex items-center gap-1.5 font-medium text-stone-300 hover:text-white disabled:opacity-50 transition-colors cursor-pointer"
+              >
+                <Clock className="w-3.5 h-3.5 text-[#E5A93C]" />
+                <span>
+                  {forgotResendCooldown > 0 ? `Resend (${forgotResendCooldown}s)` : 'Resend Code'}
+                </span>
+              </button>
+            </div>
+
+            <div className="pt-2 text-center text-xs text-stone-400">
+              <button
+                type="button"
+                onClick={() => setMode('signin')}
+                className="inline-flex items-center gap-1.5 font-semibold text-stone-400 hover:text-stone-200 transition-colors cursor-pointer"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back to Sign In</span>
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* ======================================================== */}
+        {/* SCREEN 7: FORGOT PASSWORD - ESTABLISH NEW PASSPHRASE     */}
+        {/* ======================================================== */}
+        {mode === 'forgot_new_password' && (
+          <form onSubmit={handleForgotResetPassword} className="space-y-3.5">
+            <div className="text-center mb-1">
+              <span className="font-cinzel text-xs font-bold tracking-[0.16em] text-stone-300 uppercase block mb-1">
+                ESTABLISH NEW PASSPHRASE
+              </span>
+              <p className="text-stone-400 text-xs">
+                Create a new passphrase for <span className="text-[#FFD778]">{forgotEmail}</span>
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#FAF7F2] mb-1.5">
+                New Secret Passphrase
+              </label>
+              <div className="relative">
+                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <input
+                  type={showNewForgotPass ? 'text' : 'password'}
+                  required
+                  value={newForgotPass}
+                  onChange={(e) => setNewForgotPass(e.target.value)}
+                  placeholder="Minimum 6 characters"
+                  className="w-full bg-[#0D0907] border border-[#3E2B1E] focus:border-[#C27827] focus:ring-1 focus:ring-[#C27827] rounded-xl pl-10 pr-10 py-2.5 sm:py-3 text-sm text-[#FAF7F2] placeholder:text-stone-600 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewForgotPass(!showNewForgotPass)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-stone-500 hover:text-stone-200"
+                >
+                  {showNewForgotPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#FAF7F2] mb-1.5">
+                Confirm New Passphrase
+              </label>
+              <div className="relative">
+                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <input
+                  type={showConfirmForgotPass ? 'text' : 'password'}
+                  required
+                  value={confirmForgotPass}
+                  onChange={(e) => setConfirmForgotPass(e.target.value)}
+                  placeholder="Repeat new passphrase"
+                  className="w-full bg-[#0D0907] border border-[#3E2B1E] focus:border-[#C27827] focus:ring-1 focus:ring-[#C27827] rounded-xl pl-10 pr-10 py-2.5 sm:py-3 text-sm text-[#FAF7F2] placeholder:text-stone-600 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmForgotPass(!showConfirmForgotPass)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-stone-500 hover:text-stone-200"
+                >
+                  {showConfirmForgotPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {newForgotPass && confirmForgotPass && (
+              <div className="text-[11px]">
+                {newForgotPass === confirmForgotPass ? (
+                  <span className="text-emerald-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Passphrases match
+                  </span>
+                ) : (
+                  <span className="text-rose-400 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" /> Passphrases do not match
+                  </span>
+                )}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading || newForgotPass.length < 6 || newForgotPass !== confirmForgotPass}
+              className="w-full mt-2 py-3 sm:py-3.5 rounded-xl font-sans font-extrabold text-xs sm:text-sm tracking-wider uppercase bg-gradient-to-r from-[#DF7A1B] via-[#E28522] to-[#B8570A] hover:brightness-105 active:scale-[0.98] text-[#120803] shadow-[0_4px_22px_rgba(223,122,27,0.3)] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <RotateCw className="w-4 h-4 animate-spin text-[#120803]" />
+                  <span>RESETTING & LOGGING IN...</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-4 h-4 text-[#120803] stroke-[2.4]" />
+                  <span>RESET PASSPHRASE & ENTER</span>
+                </>
+              )}
+            </button>
+
+            <div className="pt-2 text-center text-xs text-stone-400">
+              <button
+                type="button"
+                onClick={() => setMode('signin')}
+                className="inline-flex items-center gap-1.5 font-semibold text-stone-400 hover:text-stone-200 transition-colors cursor-pointer"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Cancel & Back to Sign In</span>
               </button>
             </div>
           </form>

@@ -27,25 +27,16 @@ export default async function handler(req: Request, res: Response) {
 
   try {
     const body = await parseRequestBody(req);
-    const { name, email } = body || {};
+    const { email } = body || {};
 
     if (!email || !email.includes('@')) {
       return res.status(400).json({ error: 'Please provide a valid email address.' });
     }
 
     const cleanEmail = email.toLowerCase().trim();
-    const cleanName = (name || '').trim();
-
-    // Check if user already registered
-    const existingUsers = loadUsers();
-    const userExists = existingUsers.some(u => u.email.toLowerCase() === cleanEmail);
-
-    if (userExists) {
-      return res.status(400).json({
-        error: 'An account with this email address already exists. Please Sign In.',
-        alreadyRegistered: true,
-      });
-    }
+    const users = loadUsers();
+    const existingUser = users.find(u => u.email.toLowerCase() === cleanEmail);
+    const recipientName = existingUser ? existingUser.name : 'Reader';
 
     // Generate random 5-digit OTP
     const otp = Math.floor(10000 + Math.random() * 90000).toString();
@@ -54,34 +45,33 @@ export default async function handler(req: Request, res: Response) {
     const otpStore = getOtpStore();
     otpStore.set(cleanEmail, {
       otp,
-      name: cleanName,
-      type: 'signup',
+      name: recipientName,
+      type: 'reset',
       expiresAt,
     });
 
-    const mailHtml = generateAuthEmailHtml(cleanName, otp, 'signup');
+    const mailHtml = generateAuthEmailHtml(recipientName, otp, 'reset');
 
     const mailOptions = {
       from: '"Wilting of Words | Technodef" <technodef.admin@gmail.com>',
       to: cleanEmail,
-      subject: `Your Authentication Cipher: ${otp} | Wilting of Words`,
+      subject: `Password Reset Passcode: ${otp} | Wilting of Words`,
       html: mailHtml,
     };
 
     await transporter.sendMail(mailOptions);
 
-    console.log(`[Auth] 5-digit OTP dispatched to ${cleanEmail}: ${otp}`);
+    console.log(`[Auth] Password Reset OTP dispatched to ${cleanEmail}: ${otp}`);
 
     return res.status(200).json({
       success: true,
-      message: `A 5-digit verification OTP has been dispatched to ${cleanEmail}.`,
+      message: `A 5-digit password reset code has been sent to ${cleanEmail}.`,
       expiresInMinutes: 10,
-      userExists,
     });
   } catch (error: any) {
-    console.error('[Auth] Error sending OTP:', error);
+    console.error('[Auth] Error sending reset OTP:', error);
     return res.status(500).json({
-      error: 'Failed to send OTP to your email. Please verify your email address.',
+      error: 'Failed to send password reset code. Please check your email address.',
       details: error.message,
     });
   }

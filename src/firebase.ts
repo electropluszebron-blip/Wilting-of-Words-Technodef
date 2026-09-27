@@ -107,6 +107,52 @@ export async function verifyUserInFirebase(email: string, passwordAttempt: strin
 }
 
 /**
+ * Updates a user's password in Firestore.
+ */
+export async function updateUserPasswordInFirebase(email: string, newPasswordInput: string): Promise<void> {
+  try {
+    const cleanEmail = email.toLowerCase().trim();
+    const docId = sanitizeEmailKey(cleanEmail);
+    const userDocRef = doc(db, 'users', docId);
+    
+    await setDoc(userDocRef, {
+      email: cleanEmail,
+      passwordHash: btoa(newPasswordInput),
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    
+    console.log(`[Firebase] Password updated for ${cleanEmail}`);
+  } catch (error) {
+    console.warn('[Firebase] Warning updating password in Firestore:', error);
+  }
+}
+
+/**
+ * Gets user profile from Firestore.
+ */
+export async function getUserProfileFromFirebase(email: string): Promise<FirestoreUserRecord | null> {
+  try {
+    const cleanEmail = email.toLowerCase().trim();
+    const docId = sanitizeEmailKey(cleanEmail);
+    const userDocRef = doc(db, 'users', docId);
+    const snap = await getDoc(userDocRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      return {
+        email: cleanEmail,
+        name: data.name || 'Reader',
+        createdAt: data.createdAt || new Date().toISOString(),
+        lastLoginAt: data.lastLoginAt || new Date().toISOString()
+      };
+    }
+    return null;
+  } catch (error) {
+    console.warn('[Firebase] Error fetching user profile:', error);
+    return null;
+  }
+}
+
+/**
  * Registers or updates a user in Firestore.
  */
 export async function saveUserToFirebase(email: string, name: string): Promise<void> {

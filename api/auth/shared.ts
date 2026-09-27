@@ -47,19 +47,50 @@ export function saveUsers(users: StoredUser[]) {
 
 export interface OtpEntry {
   otp: string;
-  name: string;
+  name?: string;
+  type?: 'signup' | 'reset';
   expiresAt: number;
 }
 
-// Global OTP store across invocations in same container
+// Global in-memory OTP store across warm invocations
 const globalOtpStore = new Map<string, OtpEntry>();
 
 export function getOtpStore(): Map<string, OtpEntry> {
   return globalOtpStore;
 }
 
-// Gmail App Password assembled to prevent automated crawler revoking
-const GMAIL_PASS = process.env.GMAIL_APP_PASSWORD || ['frwo', 'yyji', 'csly', 'xmgn'].join('');
+// Helper to safely parse JSON body across Express, Vercel Serverless, and standard IncomingMessage
+export async function parseRequestBody(req: any): Promise<any> {
+  if (req.body && typeof req.body === 'object') {
+    return req.body;
+  }
+  if (typeof req.body === 'string') {
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      return {};
+    }
+  }
+  return new Promise((resolve) => {
+    let raw = '';
+    req.on('data', (chunk: any) => {
+      raw += chunk;
+    });
+    req.on('end', () => {
+      try {
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch {
+        resolve({});
+      }
+    });
+    req.on('error', () => {
+      resolve({});
+    });
+  });
+}
+
+// Gmail App Password
+const GMAIL_PASS = process.env.GMAIL_APP_PASSWORD || 'frwoyyjicslyxmgn';
 
 export const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
@@ -70,13 +101,17 @@ export const transporter = nodemailer.createTransport({
     pass: GMAIL_PASS,
   },
   tls: {
-    rejectUnauthorized: false
-  }
+    rejectUnauthorized: false,
+  },
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 15000,
 });
 
-export function generateAuthEmailHtml(name: string, otp: string): string {
+export function generateAuthEmailHtml(name: string, otp: string, type: 'signup' | 'reset' = 'signup'): string {
   const formattedOtp = otp.split('').join(' ');
   const recipientName = name ? name.trim() : 'Reader';
+  const isReset = type === 'reset';
 
   return `
 <!DOCTYPE html>
@@ -127,14 +162,18 @@ export function generateAuthEmailHtml(name: string, otp: string): string {
             Respected ${recipientName},
           </p>
           <p style="margin: 0; font-size: 13.5px; line-height: 1.75; color: #3E3228;">
-            Welcome to the sanctuary of timeless letters. To confirm your identity, grant access to your exclusive manuscript collection, and establish your secret passphrase for <strong>Wilting of Words</strong>, please use the sacred authentication cipher provided below:
+            ${
+              isReset
+                ? 'We received a request to reset your sanctuary passphrase for <strong>Wilting of Words</strong>. Please use the single-use passcode below to authorize this reset:'
+                : 'Welcome to the sanctuary of timeless letters. To confirm your identity, grant access to your exclusive manuscript collection, and establish your secret passphrase for <strong>Wilting of Words</strong>, please use the sacred authentication cipher provided below:'
+            }
           </p>
         </div>
 
         <!-- Sacred Passcode Box -->
         <div style="background-color: #F8EFE1; border: 1.5px solid #8B261D; border-radius: 6px; padding: 20px 24px; margin: 26px auto; max-width: 330px; text-align: center; box-shadow: inset 0 0 12px rgba(139, 38, 29, 0.05);">
           <div style="font-family: Georgia, serif; font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: #8A6740; margin-bottom: 8px;">
-            SECURITY ACCESS PASSCODE
+            ${isReset ? 'PASSWORD RESET PASSCODE' : 'SECURITY ACCESS PASSCODE'}
           </div>
           <div style="font-family: 'Courier New', Courier, monospace, Georgia; font-size: 38px; font-weight: 800; letter-spacing: 0.35em; color: #6B1D1D; line-height: 1.1; padding: 4px 0; text-indent: 0.35em;">
             ${formattedOtp}
@@ -146,12 +185,12 @@ export function generateAuthEmailHtml(name: string, otp: string): string {
 
         <!-- Chronometer Notice Box -->
         <div style="background-color: #F7EEDE; border-left: 3.5px solid #8B261D; padding: 12px 16px; margin: 24px 0; text-align: left; font-size: 11.5px; line-height: 1.6; color: #4A3B2C;">
-          <strong style="color: #6B1D1D;">Chronometer Notice:</strong> This access token remains valid for strictly <strong>10 minutes</strong>. It is mandatory for verifying your reader identity and setting your new password. Should this window lapse, a new token must be summoned from the portal.
+          <strong style="color: #6B1D1D;">Chronometer Notice:</strong> This access token remains valid for strictly <strong>10 minutes</strong>. It is mandatory for verifying your reader identity. Should this window lapse, a new token must be summoned from the portal.
         </div>
 
         <!-- Security Disclaimer -->
         <p style="text-align: left; font-size: 12.5px; line-height: 1.65; color: #5C4B3D; margin: 0 0 24px 0;">
-          If you have not solicited access to <em>Wilting of Words</em>, please discard this epistle; your parchment and account remain inviolable and unperturbed.
+          If you have not solicited access or a password reset for <em>Wilting of Words</em>, please discard this epistle; your parchment and account remain inviolable and unperturbed.
         </p>
 
         <!-- Technodef Formal Sign-off -->
