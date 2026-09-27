@@ -45,23 +45,26 @@ async function safeFetchJson(url: string, options?: RequestInit): Promise<any> {
   try {
     const res = await fetch(url, options);
     const contentType = res.headers.get('content-type') || '';
+    
     if (!contentType.includes('application/json')) {
-      return { fallback: true, ok: false };
+      const text = await res.text();
+      const err: any = new Error(`Server returned status ${res.status}. ${text.slice(0, 120)}`);
+      err.status = res.status;
+      throw err;
     }
+    
     const text = await res.text();
     const data = text ? JSON.parse(text) : {};
+    
     if (!res.ok) {
-      const err: any = new Error(data.error || `Server returned error (${res.status})`);
+      const err: any = new Error(data.error || data.details || `Server returned error (${res.status})`);
       err.status = res.status;
       err.data = data;
       throw err;
     }
     return data;
   } catch (err: any) {
-    if (err.data || err.status) {
-      throw err;
-    }
-    return { fallback: true, ok: false, error: err.message };
+    throw err;
   }
 }
 
