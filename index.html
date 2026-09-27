@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wilting of Words | Technodef & Pratyay Saha</title>
+    <meta name="description" content="Explore Wilting of Words, a poignant novel by Pratyay Saha published by Technodef. Features a dynamic art-integrated interactive e-book reader, atmospheric soundtrack, and literary showcase." />
+    <meta property="og:title" content="Wilting of Words | Technodef & Pratyay Saha" />
+    <meta property="og:description" content="Explore Wilting of Words, a poignant novel by Pratyay Saha published by Technodef. Features a dynamic art-integrated interactive e-book reader, atmospheric soundtrack, and literary showcase." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    
+    <!-- Google Fonts for Classical Literary Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;800;900&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-[#FAF7F2] text-[#2D241E] antialiased selection:bg-[#B93826] selection:text-white overflow-x-hidden">
+    <!-- Native HTML5 Background Audio Element with Instant Autoplay Configuration -->
+    <audio 
+      id="exclusive-bg-music-player" 
+      src="/background_music.mp3" 
+      autoplay 
+      loop 
+      playsinline 
+      webkit-playsinline 
+      preload="auto" 
+      style="position:fixed;bottom:-100px;right:-100px;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:-999;"
+    >
+      <source src="/background_music.mp3" type="audio/mpeg" />
+      <source src="/background_music.m4a" type="audio/mp4" />
+    </audio>
+
+    <!-- Immediate Autoplay Audio Engine - Preset to Play Instantly -->
+    <script>
+      (function() {
+        try {
+          var audio = document.getElementById('exclusive-bg-music-player');
+          if (!audio) {
+            audio = new Audio('/background_music.mp3');
+            audio.id = 'exclusive-bg-music-player';
+          }
+          audio.loop = true;
+          audio.preload = 'auto';
+          audio.autoplay = true;
+          (audio).playsInline = true;
+          window.__bgAudio = audio;
+
+          var unmuteEvents = ['touchstart', 'touchend', 'mousedown', 'mouseup', 'click', 'keydown', 'scroll', 'pointerdown', 'wheel', 'visibilitychange'];
+          var removeListeners = function() {
+            unmuteEvents.forEach(function(evt) {
+              window.removeEventListener(evt, triggerUnmute, true);
+              document.removeEventListener(evt, triggerUnmute, true);
+            });
+          };
+
+          var triggerUnmute = function() {
+            if (audio) {
+              audio.muted = false;
+              audio.volume = 1.0;
+              if (audio.paused) {
+                audio.play().catch(function() {});
+              }
+            }
+            removeListeners();
+          };
+
+          var startPlayback = function() {
+            if (!audio) return;
+            // First attempt unmuted playback directly
+            audio.muted = false;
+            audio.volume = 1.0;
+            var p = audio.play();
+            if (p !== undefined && typeof p.then === 'function') {
+              p.then(function() {
+                // Succeeded unmuted autoplay!
+                window.__audioAutoplaySuccess = true;
+              }).catch(function(err) {
+                // If unmuted autoplay blocked by browser policy:
+                // Start playback in muted mode immediately so media hardware stream is active
+                audio.muted = true;
+                var p2 = audio.play();
+                if (p2 !== undefined && typeof p2.then === 'function') {
+                  p2.then(function() {
+                    window.__audioPlayingMuted = true;
+                  }).catch(function() {});
+                }
+                // Unmute on the first screen interaction
+                unmuteEvents.forEach(function(evt) {
+                  window.addEventListener(evt, triggerUnmute, { capture: true, once: true, passive: true });
+                  document.addEventListener(evt, triggerUnmute, { capture: true, once: true, passive: true });
+                });
+              });
+            }
+          };
+
+          // Attempt immediate playback on parse
+          startPlayback();
+
+          // Repeated playback attempts on window load, visibility, and pageshow
+          window.addEventListener('DOMContentLoaded', startPlayback, { once: true });
+          window.addEventListener('load', startPlayback, { once: true });
+          window.addEventListener('pageshow', startPlayback);
+          document.addEventListener('visibilitychange', function() {
+            if (!document.hidden && audio && audio.paused) {
+              startPlayback();
+            }
+          });
+        } catch(e) {}
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

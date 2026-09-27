@@ -1,0 +1,6 @@
+{
+  "name": "Wilting of Words - Digital Reader & Literary Archive",
+  "description": "An art-integrated, vibrant glossy digital reader and literary showcase for 'Wilting of Words' by Pratyay Saha, published by Technodef.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

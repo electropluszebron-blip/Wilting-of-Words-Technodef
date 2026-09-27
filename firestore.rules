@@ -1,0 +1,27 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened helper primitives
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.\\@]+$'); 
+    }
+    
+    function isValidUser(data) {
+      return data.email is string && data.email.size() <= 128 && data.email.size() >= 3 &&
+             data.name is string && data.name.size() <= 100 && data.name.size() >= 1;
+    }
+
+    // Registered users collection
+    match /users/{userId} {
+      allow read: if isValidId(userId);
+      allow create, update: if isValidId(userId) && isValidUser(request.resource.data);
+      allow delete: if false;
+    }
+  }
+}

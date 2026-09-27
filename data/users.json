@@ -1,0 +1,16 @@
+[
+  {
+    "id": "reader_1790432003361",
+    "name": "Pratyay Saha",
+    "email": "pratyay2008saha@gmail.com",
+    "passwordHash": "YWJBQjEyQEA=",
+    "createdAt": "2026-09-26T14:13:23.361Z"
+  },
+  {
+    "id": "reader_1790432650197",
+    "name": "Clara Reed",
+    "email": "electroplus.zebron@gmail.com",
+    "passwordHash": "c2VjcmV0cGFzc3dvcmQxMjM=",
+    "createdAt": "2026-09-26T14:24:10.197Z"
+  }
+]

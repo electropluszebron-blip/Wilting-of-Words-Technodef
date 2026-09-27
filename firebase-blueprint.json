@@ -1,0 +1,36 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered readers in the Wilting of Words literary archives",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Unique email address of the reader"
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of the reader",
+          "maxLength": 100
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of account creation"
+        },
+        "lastLoginAt": {
+          "type": "string",
+          "description": "ISO timestamp of last sign in"
+        }
+      },
+      "required": ["email", "name"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of registered readers mapped by their sanitized email or user id"
+    }
+  }
+}
