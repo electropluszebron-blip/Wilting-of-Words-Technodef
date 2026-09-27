@@ -7,6 +7,7 @@ import verifyOtpHandler from './api/auth/verify-otp';
 import setPasswordHandler from './api/auth/set-password';
 import forgotPasswordHandler from './api/auth/forgot-password';
 import resetPasswordHandler from './api/auth/reset-password';
+import checkUserHandler from './api/auth/check-user';
 import signinHandler from './api/auth/signin';
 import pdfHandler from './api/pdf';
 
@@ -22,6 +23,7 @@ app.all('/api/auth/verify-otp', (req: Request, res: Response) => verifyOtpHandle
 app.all('/api/auth/set-password', (req: Request, res: Response) => setPasswordHandler(req, res));
 app.all('/api/auth/forgot-password', (req: Request, res: Response) => forgotPasswordHandler(req, res));
 app.all('/api/auth/reset-password', (req: Request, res: Response) => resetPasswordHandler(req, res));
+app.all('/api/auth/check-user', (req: Request, res: Response) => checkUserHandler(req, res));
 app.all('/api/auth/signin', (req: Request, res: Response) => signinHandler(req, res));
 app.all('/api/auth/login', (req: Request, res: Response) => signinHandler(req, res));
 app.all('/api/pdf', (req: Request, res: Response) => pdfHandler(req, res));

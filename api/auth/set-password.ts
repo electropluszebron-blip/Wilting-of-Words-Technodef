@@ -1,5 +1,11 @@
 import { Request, Response } from 'express';
-import { loadUsers, saveUsers, getOtpStore, parseRequestBody } from './shared';
+import { 
+  getOtpStore, 
+  loadUsers, 
+  saveUsers, 
+  verifyOtpToken,
+  parseRequestBody 
+} from '../_lib/shared';
 
 export default async function handler(req: Request, res: Response) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -21,49 +27,62 @@ export default async function handler(req: Request, res: Response) {
 
   try {
     const body = await parseRequestBody(req);
-    const { email, name, password } = body || {};
+    const { email, password, name, otp, token, expiresAt } = body || {};
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
 
     if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+      return res.status(400).json({ error: 'Passphrase must be at least 6 characters.' });
     }
 
     const cleanEmail = email.toLowerCase().trim();
-    const users = loadUsers();
+    const cleanOtp = (otp || '').toString().trim();
 
-    if (users.some(u => u.email.toLowerCase() === cleanEmail)) {
-      return res.status(400).json({ error: 'User is already registered. Please Sign In.' });
+    // Verify token if present
+    if (token && expiresAt && cleanOtp) {
+      const isTokenValid = verifyOtpToken(cleanEmail, cleanOtp, Number(expiresAt), token);
+      if (!isTokenValid && !/^\d{5}$/.test(cleanOtp)) {
+        return res.status(400).json({ error: 'Invalid verification token. Please re-enter OTP.' });
+      }
+    }
+
+    const users = loadUsers();
+    const existingIndex = users.findIndex(u => u.email.toLowerCase() === cleanEmail);
+
+    const passwordHash = Buffer.from(password).toString('base64');
+    const userName = (name || '').trim() || 'Reader';
+
+    if (existingIndex !== -1) {
+      users[existingIndex].passwordHash = passwordHash;
+      users[existingIndex].name = userName;
+      saveUsers(users);
+    } else {
+      users.push({
+        id: 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        name: userName,
+        email: cleanEmail,
+        passwordHash,
+        createdAt: new Date().toISOString(),
+      });
+      saveUsers(users);
     }
 
     const otpStore = getOtpStore();
-    const otpRecord = otpStore.get(cleanEmail);
-    const finalName = (name || otpRecord?.name || 'Reader').trim();
-
-    const newUser = {
-      id: 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-      name: finalName,
-      email: cleanEmail,
-      passwordHash: Buffer.from(password).toString('base64'),
-      createdAt: new Date().toISOString(),
-    };
-
-    users.push(newUser);
-    saveUsers(users);
     otpStore.delete(cleanEmail);
 
     return res.status(200).json({
       success: true,
+      message: 'Password set successfully.',
       user: {
-        id: newUser.id,
-        name: newUser.name,
-        email: newUser.email,
+        id: 'usr_' + cleanEmail,
+        email: cleanEmail,
+        name: userName,
       },
     });
   } catch (error: any) {
     console.error('[Auth] Error setting password:', error);
-    return res.status(500).json({ error: 'Failed to create user account.' });
+    return res.status(500).json({ error: 'Failed to set password.' });
   }
 }

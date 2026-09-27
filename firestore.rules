@@ -19,7 +19,8 @@ service cloud.firestore {
 
     // Registered users collection
     match /users/{userId} {
-      allow read: if isValidId(userId);
+      allow get: if isValidId(userId);
+      allow list: if true;
       allow create, update: if isValidId(userId) && isValidUser(request.resource.data);
       allow delete: if false;
     }

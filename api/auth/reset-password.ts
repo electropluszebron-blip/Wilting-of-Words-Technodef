@@ -3,8 +3,9 @@ import {
   getOtpStore, 
   loadUsers, 
   saveUsers, 
+  verifyOtpToken,
   parseRequestBody 
-} from './shared';
+} from '../_lib/shared';
 
 export default async function handler(req: Request, res: Response) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -26,7 +27,7 @@ export default async function handler(req: Request, res: Response) {
 
   try {
     const body = await parseRequestBody(req);
-    const { email, otp, newPassword } = body || {};
+    const { email, otp, newPassword, token, expiresAt } = body || {};
 
     if (!email || !otp || !newPassword) {
       return res.status(400).json({ error: 'Email, OTP, and new password are required.' });
@@ -38,6 +39,15 @@ export default async function handler(req: Request, res: Response) {
 
     const cleanEmail = email.toLowerCase().trim();
     const cleanOtp = otp.toString().trim();
+
+    // Check token if provided
+    if (token && expiresAt) {
+      const isTokenValid = verifyOtpToken(cleanEmail, cleanOtp, Number(expiresAt), token);
+      if (!isTokenValid && !/^\d{5}$/.test(cleanOtp)) {
+        return res.status(400).json({ error: 'Invalid or expired reset token.' });
+      }
+    }
+
     const otpStore = getOtpStore();
     const record = otpStore.get(cleanEmail);
 
@@ -50,11 +60,6 @@ export default async function handler(req: Request, res: Response) {
       if (record.otp !== cleanOtp) {
         return res.status(400).json({ error: 'Invalid 5-digit reset code.' });
       }
-    } else {
-      // In serverless cold restarts, ensure valid 5 digit code
-      if (!/^\d{5}$/.test(cleanOtp)) {
-        return res.status(400).json({ error: 'Invalid reset code format.' });
-      }
     }
 
     // Update in local users store
@@ -64,16 +69,6 @@ export default async function handler(req: Request, res: Response) {
 
     if (userIndex !== -1) {
       users[userIndex].passwordHash = newHash;
-      saveUsers(users);
-    } else {
-      // If user wasn't stored locally yet, create record
-      users.push({
-        id: 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-        name: record?.name || 'Reader',
-        email: cleanEmail,
-        passwordHash: newHash,
-        createdAt: new Date().toISOString(),
-      });
       saveUsers(users);
     }
 

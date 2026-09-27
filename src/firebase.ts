@@ -29,12 +29,15 @@ export function sanitizeEmailKey(email: string): string {
 }
 
 /**
- * Checks Firestore if an account already exists for this email address.
+ * Checks Firestore and storage if an account already exists for this email address.
  * Ensures across ANY mobile or desktop device, an existing user cannot sign up again.
  */
 export async function checkUserExistsInFirebase(email: string): Promise<boolean> {
+  const cleanEmail = email.toLowerCase().trim();
+  if (!cleanEmail || !cleanEmail.includes('@')) return false;
+
+  // 1. Check Firestore
   try {
-    const cleanEmail = email.toLowerCase().trim();
     const docId = sanitizeEmailKey(cleanEmail);
     const userDocRef = doc(db, 'users', docId);
     const snap = await getDoc(userDocRef);
@@ -42,14 +45,27 @@ export async function checkUserExistsInFirebase(email: string): Promise<boolean>
       return true;
     }
 
-    // Secondary fallback query by email field
     const q = query(collection(db, 'users'), where('email', '==', cleanEmail));
     const querySnap = await getDocs(q);
-    return !querySnap.empty;
+    if (!querySnap.empty) {
+      return true;
+    }
   } catch (error) {
-    console.warn('[Firebase] Warning checking user existence:', error);
-    return false;
+    console.warn('[Firebase] Warning checking Firestore existence:', error);
   }
+
+  // 2. Fallback check unified server database
+  try {
+    const res = await fetch(`/api/auth/check-user?email=${encodeURIComponent(cleanEmail)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.exists) return true;
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  return false;
 }
 
 /**
@@ -76,17 +92,22 @@ export async function saveUserWithPasswordToFirebase(email: string, name: string
 }
 
 /**
- * Validates user credentials directly with Firestore.
+ * Validates user credentials strictly with Firestore.
+ * Requires email and password to strictly match stored credentials.
  */
-export async function verifyUserInFirebase(email: string, passwordAttempt: string): Promise<{ valid: boolean; user?: FirestoreUserRecord } | null> {
+export async function verifyUserInFirebase(email: string, passwordAttempt: string): Promise<{ valid: boolean; notFound?: boolean; user?: FirestoreUserRecord } | null> {
   try {
     const cleanEmail = email.toLowerCase().trim();
     const docId = sanitizeEmailKey(cleanEmail);
     const userDocRef = doc(db, 'users', docId);
     const snap = await getDoc(userDocRef);
+    
     if (snap.exists()) {
       const data = snap.data() as any;
-      if (!data.passwordHash || data.passwordHash === btoa(passwordAttempt) || data.passwordHash === passwordAttempt) {
+      const expectedHash = btoa(passwordAttempt);
+      const isMatch = data.passwordHash && (data.passwordHash === expectedHash || data.passwordHash === passwordAttempt);
+      
+      if (isMatch) {
         return {
           valid: true,
           user: {
@@ -99,7 +120,29 @@ export async function verifyUserInFirebase(email: string, passwordAttempt: strin
       }
       return { valid: false };
     }
-    return null;
+
+    // Secondary query check
+    const q = query(collection(db, 'users'), where('email', '==', cleanEmail));
+    const querySnap = await getDocs(q);
+    if (!querySnap.empty) {
+      const data = querySnap.docs[0].data() as any;
+      const expectedHash = btoa(passwordAttempt);
+      const isMatch = data.passwordHash && (data.passwordHash === expectedHash || data.passwordHash === passwordAttempt);
+      if (isMatch) {
+        return {
+          valid: true,
+          user: {
+            email: cleanEmail,
+            name: data.name || 'Reader',
+            createdAt: data.createdAt || new Date().toISOString(),
+            lastLoginAt: new Date().toISOString()
+          }
+        };
+      }
+      return { valid: false };
+    }
+
+    return { valid: false, notFound: true };
   } catch (error) {
     console.warn('[Firebase] Warning verifying user:', error);
     return null;

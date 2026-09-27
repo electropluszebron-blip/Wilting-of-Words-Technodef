@@ -4,8 +4,9 @@ import {
   loadUsers, 
   transporter, 
   generateAuthEmailHtml,
+  createOtpToken,
   parseRequestBody 
-} from './shared';
+} from '../_lib/shared';
 
 export default async function handler(req: Request, res: Response) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -42,9 +43,13 @@ export default async function handler(req: Request, res: Response) {
     const otp = Math.floor(10000 + Math.random() * 90000).toString();
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 
+    // Create verification token for stateless edge invocations
+    const token = createOtpToken(cleanEmail, otp, expiresAt);
+
     const otpStore = getOtpStore();
     otpStore.set(cleanEmail, {
       otp,
+      token,
       name: recipientName,
       type: 'reset',
       expiresAt,
@@ -67,6 +72,8 @@ export default async function handler(req: Request, res: Response) {
       success: true,
       message: `A 5-digit password reset code has been sent to ${cleanEmail}.`,
       expiresInMinutes: 10,
+      token,
+      expiresAt,
     });
   } catch (error: any) {
     console.error('[Auth] Error sending reset OTP:', error);

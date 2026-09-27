@@ -99,6 +99,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [serverToken, setServerToken] = useState<string | null>(null);
+  const [serverTokenExpiresAt, setServerTokenExpiresAt] = useState<number | null>(null);
 
   // Resend Cooldowns
   const [resendCooldown, setResendCooldown] = useState<number>(60);
@@ -161,11 +163,18 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         return;
       }
 
-      await safeFetchJson('/api/auth/send-otp', {
+      const data = await safeFetchJson('/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim(), email: cleanEmail }),
       });
+
+      if (data?.token) {
+        setServerToken(data.token);
+      }
+      if (data?.expiresAt) {
+        setServerTokenExpiresAt(data.expiresAt);
+      }
 
       setResendCooldown(60);
       setOtp(['', '', '', '', '']);
@@ -232,7 +241,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       await safeFetchJson('/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase(), otp: fullOtp }),
+        body: JSON.stringify({ 
+          email: email.trim().toLowerCase(), 
+          otp: fullOtp,
+          token: serverToken,
+          expiresAt: serverTokenExpiresAt 
+        }),
       });
 
       setMode('password');
@@ -267,7 +281,9 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
             email: email.trim().toLowerCase(),
             otp: otp.join(''),
             password,
-            name: name.trim()
+            name: name.trim(),
+            token: serverToken,
+            expiresAt: serverTokenExpiresAt,
           }),
         });
       } catch (apiErr) {
@@ -304,15 +320,33 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
     const cleanEmail = signInEmail.trim().toLowerCase();
     if (!cleanEmail || !signInPassword) {
-      setError('Please provide both your registered email and passphrase.');
+      setError('Please provide both your registered email and secret passphrase.');
       return;
     }
 
     setLoading(true);
     try {
-      let authenticatedUser: AuthUser | null = null;
+      // 1. Verify user credentials strictly in Firestore first
+      const fbResult = await verifyUserInFirebase(cleanEmail, signInPassword);
+      
+      if (fbResult) {
+        if (fbResult.notFound) {
+          throw new Error(`No account found for "${cleanEmail}". You must Sign Up before accessing the reader sanctuary.`);
+        }
+        if (!fbResult.valid) {
+          throw new Error('Incorrect secret passphrase. Access denied. Please check your credentials or click Forgot Password.');
+        }
+      }
 
-      try {
+      let authenticatedUser: AuthUser | null = null;
+      if (fbResult && fbResult.valid) {
+        authenticatedUser = {
+          id: 'fb_' + cleanEmail,
+          name: fbResult.user?.name || 'Reader',
+          email: cleanEmail,
+        };
+      } else {
+        // Fallback to server endpoint
         const data = await safeFetchJson('/api/auth/signin', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -327,24 +361,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           name: data.user?.name || 'Reader',
           email: data.user?.email || cleanEmail,
         };
-      } catch (apiErr: any) {
-        // Fallback directly to Firebase Firestore
-        const fbResult = await verifyUserInFirebase(cleanEmail, signInPassword);
-        if (fbResult && fbResult.valid) {
-          authenticatedUser = {
-            id: 'fb_' + cleanEmail,
-            name: fbResult.user?.name || 'Reader',
-            email: cleanEmail,
-          };
-        } else if (fbResult && !fbResult.valid) {
-          throw new Error('Incorrect secret passphrase. Please check your credentials or click Forgot Password.');
-        } else {
-          throw new Error(apiErr.message || 'Invalid credentials or account not found. Please verify your email.');
-        }
       }
 
       if (!authenticatedUser) {
-        throw new Error('Authentication could not be completed.');
+        throw new Error('Incorrect secret passphrase or account not registered. Access denied.');
       }
 
       // Record login in Firestore
@@ -357,7 +377,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       audioSynth.playNow();
       onAuthenticated(authenticatedUser);
     } catch (err: any) {
-      setError(err.message || 'Failed to authenticate.');
+      setError(err.message || 'Invalid credentials. Access denied.');
     } finally {
       setLoading(false);
     }
@@ -377,11 +397,26 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
     setLoading(true);
     try {
-      await safeFetchJson('/api/auth/forgot-password', {
+      // 1. Strict Firestore Check: If email is not existing in Firebase, do NOT allow sign in / forgot password
+      const userExists = await checkUserExistsInFirebase(cleanEmail);
+      if (!userExists) {
+        setError(`No registered sanctuary reader account exists for "${cleanEmail}". Password reset and access are not permitted. Please Sign Up first.`);
+        setLoading(false);
+        return;
+      }
+
+      const data = await safeFetchJson('/api/auth/forgot-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: cleanEmail }),
       });
+
+      if (data?.token) {
+        setServerToken(data.token);
+      }
+      if (data?.expiresAt) {
+        setServerTokenExpiresAt(data.expiresAt);
+      }
 
       setForgotResendCooldown(60);
       setForgotOtp(['', '', '', '', '']);
@@ -432,17 +467,31 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     e.preventDefault();
     const fullOtp = forgotOtp.join('');
     if (fullOtp.length !== 5) {
-      setError('Please enter the 5-digit reset passcode from your email.');
+      setError('Please enter the exact 5-digit reset passcode sent to your email.');
       return;
     }
 
     setError(null);
     setLoading(true);
     try {
-      // In serverless, verification happens with set new password, or verify-otp
+      const verifyRes = await safeFetchJson('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: forgotEmail.trim().toLowerCase(),
+          otp: fullOtp,
+          token: serverToken,
+          expiresAt: serverTokenExpiresAt,
+        })
+      });
+
+      if (verifyRes && verifyRes.error) {
+        throw new Error(verifyRes.error);
+      }
+
       setMode('forgot_new_password');
     } catch (err: any) {
-      setError(err.message || 'Invalid reset code.');
+      setError(err.message || 'Invalid or expired 5-digit reset passcode. Please check your email.');
     } finally {
       setLoading(false);
     }
@@ -468,7 +517,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
     setLoading(true);
     try {
-      // 1. Call backend reset endpoint
+      // 1. Strictly verify the user exists in Firebase Firestore
+      const userExists = await checkUserExistsInFirebase(cleanEmail);
+      if (!userExists) {
+        throw new Error(`Sanctuary account for "${cleanEmail}" does not exist. Password reset is not permitted.`);
+      }
+
+      // 2. Call backend reset endpoint
       try {
         await safeFetchJson('/api/auth/reset-password', {
           method: 'POST',
@@ -477,16 +532,18 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
             email: cleanEmail,
             otp: fullOtp,
             newPassword: newForgotPass,
+            token: serverToken,
+            expiresAt: serverTokenExpiresAt,
           }),
         });
       } catch (apiErr) {
         console.warn('[Auth] Server reset API warning:', apiErr);
       }
 
-      // 2. Update directly in Firestore
+      // 3. Update directly in Firestore
       await updateUserPasswordInFirebase(cleanEmail, newForgotPass);
 
-      // 3. Fetch user profile from Firebase
+      // 4. Fetch user profile from Firebase
       const profile = await getUserProfileFromFirebase(cleanEmail);
       const authenticatedUser: AuthUser = {
         name: profile?.name || 'Reader',
@@ -500,7 +557,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       audioSynth.playNow();
       onAuthenticated(authenticatedUser);
     } catch (err: any) {
-      setError(err.message || 'Failed to update passphrase. Please try again.');
+      setError(err.message || 'Failed to update passphrase. Access denied.');
     } finally {
       setLoading(false);
     }
@@ -630,10 +687,44 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         </div>
 
         {/* Master Title */}
-        <div className="text-center mb-5">
+        <div className="text-center mb-4">
           <h2 className="font-cinzel text-2xl sm:text-[26px] font-black tracking-[0.14em] uppercase text-[#FFFDF8] leading-tight">
             WILTING OF WORDS
           </h2>
+        </div>
+
+        {/* Top Dual Tabs: SIGN UP & SIGN IN */}
+        <div className="flex items-center justify-center p-1 mb-4 rounded-xl bg-[#0D0907] border border-[#3E2B1E]">
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setSuccessMsg(null);
+              setMode('signup');
+            }}
+            className={`flex-1 py-2 text-xs font-bold font-sans uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+              mode === 'signup' || mode === 'otp' || mode === 'password'
+                ? 'bg-gradient-to-r from-[#DF7A1B] to-[#994709] text-white shadow-md'
+                : 'text-stone-400 hover:text-stone-200'
+            }`}
+          >
+            Sign Up
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setSuccessMsg(null);
+              setMode('signin');
+            }}
+            className={`flex-1 py-2 text-xs font-bold font-sans uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+              mode === 'signin' || mode === 'forgot_email' || mode === 'forgot_otp' || mode === 'forgot_new_password'
+                ? 'bg-gradient-to-r from-[#DF7A1B] to-[#994709] text-white shadow-md'
+                : 'text-stone-400 hover:text-stone-200'
+            }`}
+          >
+            Sign In
+          </button>
         </div>
 
         {/* Global Error Banner */}

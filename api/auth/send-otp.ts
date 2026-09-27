@@ -4,8 +4,9 @@ import {
   loadUsers, 
   transporter, 
   generateAuthEmailHtml,
+  createOtpToken,
   parseRequestBody 
-} from './shared';
+} from '../_lib/shared';
 
 export default async function handler(req: Request, res: Response) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -36,7 +37,7 @@ export default async function handler(req: Request, res: Response) {
     const cleanEmail = email.toLowerCase().trim();
     const cleanName = (name || '').trim();
 
-    // Check if user already registered
+    // Check if user already registered in server store
     const existingUsers = loadUsers();
     const userExists = existingUsers.some(u => u.email.toLowerCase() === cleanEmail);
 
@@ -51,9 +52,13 @@ export default async function handler(req: Request, res: Response) {
     const otp = Math.floor(10000 + Math.random() * 90000).toString();
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 
+    // Create verification token for stateless Vercel edge/lambdas
+    const token = createOtpToken(cleanEmail, otp, expiresAt);
+
     const otpStore = getOtpStore();
     otpStore.set(cleanEmail, {
       otp,
+      token,
       name: cleanName,
       type: 'signup',
       expiresAt,
@@ -76,6 +81,8 @@ export default async function handler(req: Request, res: Response) {
       success: true,
       message: `A 5-digit verification OTP has been dispatched to ${cleanEmail}.`,
       expiresInMinutes: 10,
+      token,
+      expiresAt,
       userExists,
     });
   } catch (error: any) {

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { loadUsers, parseRequestBody } from './shared';
+import { loadUsers, parseRequestBody } from '../_lib/shared';
 
 export default async function handler(req: Request, res: Response) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -32,16 +32,17 @@ export default async function handler(req: Request, res: Response) {
     const user = users.find(u => u.email.toLowerCase() === cleanEmail);
 
     if (!user) {
-      return res.status(404).json({ error: 'No account found with this email. Please sign up first.' });
+      return res.status(401).json({ error: 'Account not found. Please Sign Up.' });
     }
 
-    const providedHash = Buffer.from(password).toString('base64');
-    if (user.passwordHash !== providedHash && user.passwordHash !== password) {
-      return res.status(401).json({ error: 'Invalid password. Please check your credentials.' });
+    const inputHash = Buffer.from(password).toString('base64');
+    if (user.passwordHash !== inputHash && user.passwordHash !== password) {
+      return res.status(401).json({ error: 'Incorrect passphrase. Access denied.' });
     }
 
     return res.status(200).json({
       success: true,
+      message: 'Authentication successful.',
       user: {
         id: user.id,
         name: user.name,
@@ -49,7 +50,7 @@ export default async function handler(req: Request, res: Response) {
       },
     });
   } catch (error: any) {
-    console.error('[Auth] Error during sign in:', error);
-    return res.status(500).json({ error: 'Internal server error during authentication.' });
+    console.error('[Auth] Error signing in:', error);
+    return res.status(500).json({ error: 'Failed to sign in.' });
   }
 }

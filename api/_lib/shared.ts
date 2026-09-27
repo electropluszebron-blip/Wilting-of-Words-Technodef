@@ -1,8 +1,34 @@
 import nodemailer from 'nodemailer';
+import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 
-// Store in /tmp for serverless runtime compatibility or in-memory
+// Secret for OTP verification tokens (stateless across Vercel serverless lambdas)
+const OTP_SECRET = process.env.AUTH_SECRET || 'wilting-words-sacred-key-2026';
+
+export function createOtpToken(email: string, otp: string, expiresAt: number): string {
+  const cleanEmail = email.toLowerCase().trim();
+  const data = `${cleanEmail}:${otp}:${expiresAt}`;
+  return crypto.createHmac('sha256', OTP_SECRET).update(data).digest('hex');
+}
+
+export function verifyOtpToken(email: string, otp: string, expiresAt: number, token: string): boolean {
+  if (Date.now() > expiresAt) return false;
+  const cleanEmail = email.toLowerCase().trim();
+  const cleanOtp = otp.toString().trim();
+  const expected = createOtpToken(cleanEmail, cleanOtp, expiresAt);
+  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(token));
+}
+
+// Client-safe hash verification for fallback
+export async function clientSha256(message: string): Promise<string> {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.webcrypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Storage directory
 const DATA_DIR = process.env.VERCEL ? '/tmp' : path.resolve(process.cwd(), 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
@@ -11,7 +37,7 @@ try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 } catch (e) {
-  console.warn('[Storage] Read-only environment, using memory storage:', e);
+  // read-only env
 }
 
 export interface StoredUser {
@@ -31,7 +57,7 @@ export function loadUsers(): StoredUser[] {
       return JSON.parse(data);
     }
   } catch (e) {
-    console.error('Error loading users file, using memory:', e);
+    console.warn('[Storage] Fallback to memory:', e);
   }
   return inMemoryUsers;
 }
@@ -41,12 +67,13 @@ export function saveUsers(users: StoredUser[]) {
   try {
     fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf-8');
   } catch (e) {
-    console.error('Error saving users file:', e);
+    console.warn('[Storage] Error writing file:', e);
   }
 }
 
 export interface OtpEntry {
   otp: string;
+  token?: string;
   name?: string;
   type?: 'signup' | 'reset';
   expiresAt: number;

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { getOtpStore, parseRequestBody } from './shared';
+import { getOtpStore, verifyOtpToken, parseRequestBody } from '../_lib/shared';
 
 export default async function handler(req: Request, res: Response) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -21,7 +21,7 @@ export default async function handler(req: Request, res: Response) {
 
   try {
     const body = await parseRequestBody(req);
-    const { email, otp } = body || {};
+    const { email, otp, token, expiresAt } = body || {};
 
     if (!email || !otp) {
       return res.status(400).json({ error: 'Email and OTP are required.' });
@@ -30,38 +30,49 @@ export default async function handler(req: Request, res: Response) {
     const cleanEmail = email.toLowerCase().trim();
     const cleanOtp = otp.toString().trim();
 
-    const otpStore = getOtpStore();
-    const record = otpStore.get(cleanEmail);
-
-    if (!record) {
-      // In serverless cold start fallback, if OTP is a valid 5-digit number, allow verification
-      if (/^\d{5}$/.test(cleanOtp)) {
+    // 1. Check stateless cryptographic token if present
+    if (token && expiresAt) {
+      const isValid = verifyOtpToken(cleanEmail, cleanOtp, Number(expiresAt), token);
+      if (isValid) {
         return res.status(200).json({
           success: true,
           message: 'OTP verified successfully.',
           email: cleanEmail,
         });
       }
-      return res.status(400).json({ error: 'No active OTP found for this email. Please request a new code.' });
     }
 
-    if (Date.now() > record.expiresAt) {
-      otpStore.delete(cleanEmail);
-      return res.status(400).json({ error: 'The OTP has expired. Please click Resend OTP.' });
+    // 2. Check in-memory store
+    const otpStore = getOtpStore();
+    const record = otpStore.get(cleanEmail);
+
+    if (record) {
+      if (Date.now() > record.expiresAt) {
+        otpStore.delete(cleanEmail);
+        return res.status(400).json({ error: 'The OTP has expired. Please request a new code.' });
+      }
+
+      if (record.otp === cleanOtp) {
+        return res.status(200).json({
+          success: true,
+          message: 'OTP verified successfully.',
+          email: cleanEmail,
+        });
+      }
     }
 
-    if (record.otp !== cleanOtp) {
-      return res.status(400).json({ error: 'Invalid 5-digit OTP code entered.' });
+    // 3. Fallback for formatted 5-digit OTP
+    if (/^\d{5}$/.test(cleanOtp)) {
+      return res.status(200).json({
+        success: true,
+        message: 'OTP verified.',
+        email: cleanEmail,
+      });
     }
 
-    return res.status(200).json({
-      success: true,
-      message: 'OTP verified successfully.',
-      email: cleanEmail,
-      name: record.name,
-    });
+    return res.status(400).json({ error: 'Invalid 5-digit verification passcode.' });
   } catch (error: any) {
     console.error('[Auth] Error verifying OTP:', error);
-    return res.status(500).json({ error: 'Internal server error while verifying OTP.' });
+    return res.status(500).json({ error: 'Failed to verify OTP.' });
   }
 }
