@@ -410,9 +410,15 @@ async function startServer() {
     }
   }
 
-  app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`[Server] Wilting of Words portal running on http://0.0.0.0:${PORT}`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(Number(PORT), '0.0.0.0', () => {
+      console.log(`[Server] Wilting of Words portal running on http://0.0.0.0:${PORT}`);
+    });
+  }
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;

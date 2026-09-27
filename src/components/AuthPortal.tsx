@@ -35,6 +35,24 @@ interface AuthPortalProps {
   initialMode?: 'signup' | 'signin';
 }
 
+async function safeFetchJson(url: string, options?: RequestInit): Promise<any> {
+  const res = await fetch(url, options);
+  const text = await res.text();
+  let data: any;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error('Authentication server response was unexpected. Please try again.');
+  }
+  if (!res.ok) {
+    const err: any = new Error(data.error || `Server returned error (${res.status})`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
 export const AuthPortal: React.FC<AuthPortalProps> = ({
   isOpen,
   onClose,
@@ -111,21 +129,21 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         return;
       }
 
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), email: cleanEmail }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.alreadyRegistered) {
+      let data: any;
+      try {
+        data = await safeFetchJson('/api/auth/send-otp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name.trim(), email: cleanEmail }),
+        });
+      } catch (fetchErr: any) {
+        if (fetchErr.data?.alreadyRegistered) {
           setError('An account with this email address already exists. Please Sign In.');
           setSignInEmail(cleanEmail);
           setMode('signin');
           return;
         }
-        throw new Error(data.error || 'Failed to dispatch verification OTP.');
+        throw fetchErr;
       }
 
       setResendCooldown(60);
@@ -184,13 +202,11 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/verify-otp', {
+      await safeFetchJson('/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim().toLowerCase(), otp: fullOtp }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Invalid OTP. Please check your email inbox.');
 
       setMode('password');
     } catch (err: any) {
@@ -216,7 +232,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/set-password', {
+      await safeFetchJson('/api/auth/set-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -226,8 +242,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           name: name.trim()
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to seal passphrase.');
 
       // Save user record to Firestore database for cross-device persistence
       await saveUserToFirebase(email.trim().toLowerCase(), name.trim());
@@ -255,7 +269,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/login', {
+      const data = await safeFetchJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -263,9 +277,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           password: signInPassword,
         }),
       });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Authentication failed.');
 
       const authenticatedUser: AuthUser = {
         id: data.user.id,
