@@ -146,12 +146,16 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       setGeneratedCipher(newOtp);
 
       try {
-        await safeFetchJson('/api/auth/send-otp', {
+        const res = await safeFetchJson('/api/auth/send-otp', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: name.trim(), email: cleanEmail }),
         });
-        setCipherNotice(null);
+        if (res && res.fallback) {
+          setCipherNotice(`Authentication Cipher: ${newOtp}`);
+        } else {
+          setCipherNotice(null);
+        }
       } catch (fetchErr: any) {
         if (fetchErr.data?.alreadyRegistered) {
           setError('An account with this email address already exists. Please Sign In.');
@@ -159,8 +163,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           setMode('signin');
           return;
         }
-        // If static CDN without Node backend, provide smooth fallback with generated security cipher
-        console.log('[Auth] Dispatched security cipher:', newOtp);
         setCipherNotice(`Authentication Cipher: ${newOtp}`);
       }
 
@@ -363,21 +365,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     } finally {
       setLoading(false);
     }
-  };
-
-  // 6. Fast Auth option
-  const handleGoogleFastAuth = async () => {
-    const fastUser: AuthUser = {
-      id: 'google_reader_' + Date.now(),
-      name: name.trim() || 'Pratyay Saha',
-      email: email.trim() || 'reader@technodef.com',
-    };
-    try {
-      await saveUserToFirebase(fastUser.email, fastUser.name);
-      localStorage.setItem('wilting_auth_user', JSON.stringify(fastUser));
-    } catch {}
-    audioSynth.playNow();
-    onAuthenticated(fastUser);
   };
 
   if (!isOpen) return null;
@@ -605,16 +592,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                   <span>Send OTP</span>
                 </>
               )}
-            </button>
-
-            {/* Secondary Action: Continue with Google Fast Auth */}
-            <button
-              type="button"
-              onClick={handleGoogleFastAuth}
-              className="w-full py-2.5 sm:py-3 rounded-xl border border-[#3E2B1E] bg-[#120C08]/90 hover:bg-[#1C140D] transition-colors flex items-center justify-center gap-2 text-xs font-semibold text-[#FFD778] cursor-pointer"
-            >
-              <Sparkles className="w-4 h-4 text-[#FFD778]" />
-              <span>Continue with Google Fast Auth</span>
             </button>
 
             {/* Bottom: Already signed up? Sign In */}
@@ -915,16 +892,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                   <span>AUTHENTICATE & ENTER</span>
                 </>
               )}
-            </button>
-
-            {/* Secondary Action: Continue with Google Fast Auth */}
-            <button
-              type="button"
-              onClick={handleGoogleFastAuth}
-              className="w-full py-2.5 sm:py-3 rounded-xl border border-[#3E2B1E] bg-[#120C08]/90 hover:bg-[#1C140D] transition-colors flex items-center justify-center gap-2 text-xs font-semibold text-[#FFD778] cursor-pointer"
-            >
-              <Sparkles className="w-4 h-4 text-[#FFD778]" />
-              <span>Continue with Google Fast Auth</span>
             </button>
 
             {/* Bottom link: New reader? Sign Up */}
