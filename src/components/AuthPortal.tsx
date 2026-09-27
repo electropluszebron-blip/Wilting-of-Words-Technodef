@@ -78,8 +78,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [generatedCipher, setGeneratedCipher] = useState<string>('');
-  const [cipherNotice, setCipherNotice] = useState<string | null>(null);
 
   // Sign In Form State
   const [signInEmail, setSignInEmail] = useState('');
@@ -115,7 +113,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const handleSendOtp = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setError(null);
-    setCipherNotice(null);
 
     if (!name.trim()) {
       setError('Please enter your name.');
@@ -141,30 +138,11 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         return;
       }
 
-      // Generate local security cipher
-      const newOtp = Math.floor(10000 + Math.random() * 90000).toString();
-      setGeneratedCipher(newOtp);
-
-      try {
-        const res = await safeFetchJson('/api/auth/send-otp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name.trim(), email: cleanEmail }),
-        });
-        if (res && res.fallback) {
-          setCipherNotice(`Authentication Cipher: ${newOtp}`);
-        } else {
-          setCipherNotice(null);
-        }
-      } catch (fetchErr: any) {
-        if (fetchErr.data?.alreadyRegistered) {
-          setError('An account with this email address already exists. Please Sign In.');
-          setSignInEmail(cleanEmail);
-          setMode('signin');
-          return;
-        }
-        setCipherNotice(`Authentication Cipher: ${newOtp}`);
-      }
+      await safeFetchJson('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), email: cleanEmail }),
+      });
 
       setResendCooldown(60);
       setOtp(['', '', '', '', '']);
@@ -174,7 +152,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         otpInputRefs.current[0]?.focus();
       }, 150);
     } catch (err: any) {
-      setError(err.message || 'Network error occurred. Please verify your connection.');
+      if (err.data?.alreadyRegistered) {
+        setError('An account with this email address already exists. Please Sign In.');
+        setSignInEmail(cleanEmail);
+        setMode('signin');
+      } else {
+        setError(err.message || 'Failed to dispatch verification email. Please check your address.');
+      }
     } finally {
       setLoading(false);
     }
@@ -222,35 +206,15 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     setError(null);
     setLoading(true);
     try {
-      let isVerified = false;
+      await safeFetchJson('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), otp: fullOtp }),
+      });
 
-      // Check client cipher fallback
-      if (generatedCipher && fullOtp === generatedCipher) {
-        isVerified = true;
-      }
-
-      if (!isVerified) {
-        try {
-          await safeFetchJson('/api/auth/verify-otp', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: email.trim().toLowerCase(), otp: fullOtp }),
-          });
-          isVerified = true;
-        } catch (apiErr: any) {
-          if (!generatedCipher) {
-            throw new Error(apiErr.message || 'Invalid OTP. Please check your email inbox.');
-          }
-        }
-      }
-
-      if (isVerified || fullOtp.length === 5) {
-        setMode('password');
-      } else {
-        throw new Error('Invalid OTP code. Please check and re-enter.');
-      }
+      setMode('password');
     } catch (err: any) {
-      setError(err.message || 'Invalid OTP code.');
+      setError(err.message || 'Invalid OTP code. Please check the code in your email.');
     } finally {
       setLoading(false);
     }
@@ -622,11 +586,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               <p className="text-stone-400 text-xs">
                 Enter the code sent to <span className="text-[#FFD778] font-mono">{email}</span>
               </p>
-              {cipherNotice && (
-                <div className="mt-2 py-1.5 px-3 rounded-lg bg-[#E5A93C]/10 border border-[#E5A93C]/40 text-[#FFD778] text-xs font-mono font-bold tracking-widest inline-block">
-                  {cipherNotice}
-                </div>
-              )}
             </div>
 
             {/* 5 Distinct Rounded OTP Boxes */}
